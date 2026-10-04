@@ -1,0 +1,9 @@
+pluginManagement {
+    repositories { gradlePluginPortal(); mavenCentral() }
+}
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories { mavenCentral() }
+}
+rootProject.name = 'finpay'
+include 'platform', 'wallet-service', 'payment-service', 'ledger-service', 'notification-service', 'intelligence-service'

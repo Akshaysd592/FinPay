@@ -1,0 +1,36 @@
+name: FinPay validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # Opt-in, trusted runs on your hardware; no paid hosted-runner minutes are required.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30 # Allows fresh Gradle/container downloads and integration startup.
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-java@v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
+      - name: Unit tests, integration tests, and application packaging
+        run: bash gradlew clean test integrationTest bootJar --no-daemon --console=plain
+      - name: Validate Compose and build service images
+        env:
+          FINPAY_DB_PASSWORD: ci-placeholder-not-used-for-running-databases
+          FINPAY_IDP_PASSWORD: ci-placeholder-not-used-for-running-identity
+        run: |
+          docker compose config --quiet
+          for service in wallet payment ledger notification intelligence; do
+            docker build --build-arg SERVICE="$service-service" --tag "finpay/$service:ci" .
+          done
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: verification-reports
+          path: '**/build/reports/'

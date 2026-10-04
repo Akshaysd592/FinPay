@@ -1,0 +1,309 @@
+openapi: 3.0.3
+info:
+  title: FinPay Sandbox API
+  version: 0.1.0
+  description: >-
+    Simulated INR wallet payments. All amounts are integer paise. A payment response
+    acknowledges a durable request, not settlement; poll its status. Owner identity
+    comes from the JWT subject. This API does not move real bank funds.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /api/wallets:
+    post:
+      operationId: createWallet
+      summary: Create or return the caller's INR wallet
+      responses:
+        '200': {$ref: '#/components/responses/Wallet'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/wallets/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getWallet
+      summary: Read a caller-owned wallet
+      responses:
+        '200': {$ref: '#/components/responses/Wallet'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/wallets/{id}/sandbox-funding:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: fundSandboxWallet
+      summary: Add simulated funds; ADMIN role and sandbox configuration required
+      description: >-
+        Replaying the same UUID key and payload has no additional effect.
+        Reusing an operation ID with different data returns 409.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountMinor]
+              properties:
+                amountMinor: {type: integer, format: int64, minimum: 1, maximum: 5000000}
+      responses:
+        '204': {description: 'Funding committed, or an identical request was already committed'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: ADMIN role required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/payments:
+    post:
+      operationId: createPayment
+      summary: Initiate an asynchronous wallet payment
+      description: >-
+        Source and destination wallets must differ. Amounts above 5000000 paise are
+        accepted as requests but rejected asynchronously by the deterministic risk rule.
+        The wallet service checks source ownership before moving any funds.
+        The same key and payload return the existing payment, including its terminal status.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PaymentRequest'}
+      responses:
+        '202':
+          description: Durable request accepted or previously accepted request returned; not proof of settlement
+          headers:
+            Location: {description: Relative URL for polling payment status, schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Payment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    get:
+      operationId: getPaymentHistory
+      summary: Read up to 50 outgoing payments, newest first
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Caller-owned payments; may be empty
+          content:
+            application/json:
+              schema: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/Payment'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/payments/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getPayment
+      summary: Poll a caller-owned payment's current status
+      responses:
+        '200':
+          description: PENDING remains uncertain until a wallet outcome is processed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Payment'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/ledger/{paymentId}:
+    get:
+      operationId: getLedgerEntries
+      summary: Read a posted debit/credit pair; ADMIN role required
+      description: The ledger projection is eventually consistent; an unprojected payment returns 404.
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Two entries with equal amounts and opposite sides
+          content:
+            application/json:
+              schema: {type: array, minItems: 2, maxItems: 2, items: {$ref: '#/components/schemas/LedgerEntry'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: ADMIN role required}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/notifications:
+    get:
+      operationId: getNotifications
+      summary: Read up to 50 caller-owned in-app payment notifications
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Eventually consistent in-app results; no email/SMS delivery is implied
+          content:
+            application/json:
+              schema: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/Notification'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/insights/{month}:
+    parameters:
+      - {$ref: '#/components/parameters/Month'}
+    get:
+      operationId: getMonthlySpending
+      summary: Read caller-owned outgoing spending in a UTC calendar month
+      responses:
+        '200':
+          description: Backend-computed totals; sandbox funding is excluded
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SpendingReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/insights/{month}/summary:
+    parameters:
+      - {$ref: '#/components/parameters/Month'}
+    post:
+      operationId: summarizeMonthlySpending
+      summary: Generate a narrative from the caller's structured monthly report
+      description: >-
+        AI is disabled by default. When enabled, local Ollama receives only aggregate
+        categories and totals; it receives no financial write capability. No paid AI API
+        or key is used. Missing or slow local models return a deterministic fallback.
+        The narrative is not authoritative.
+      responses:
+        '200':
+          description: Structured totals plus an AI or deterministic fallback narrative
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Summary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID retained for request deduplication; reuse after uncertain outcomes
+      schema: {type: string, format: uuid}
+    Offset:
+      name: offset
+      in: query
+      schema: {type: integer, minimum: 0, maximum: 100000, default: 0}
+    Month:
+      name: month
+      in: path
+      required: true
+      description: UTC calendar month between 2000-01 and 2100-12
+      schema: {type: string, pattern: '^(20[0-9]{2}|2100)-(0[1-9]|1[0-2])$'}
+  responses:
+    Wallet:
+      description: The authenticated user's INR wallet
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Wallet'}
+    Unauthorized:
+      description: Missing, expired, invalid, wrong-issuer, or wrong-audience bearer token
+    BadRequest:
+      description: Invalid input, unsupported month, or disabled/out-of-limit sandbox funding
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    NotFound:
+      description: Resource does not exist, is not projected yet, or is not accessible to this caller
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Conflict:
+      description: Idempotency key or operation ID was already used with a different payload
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    Wallet:
+      type: object
+      required: [id, ownerId, currency, balanceMinor, version]
+      properties:
+        id: {type: string, format: uuid, readOnly: true}
+        ownerId: {type: string, readOnly: true}
+        currency: {type: string, enum: [INR], readOnly: true}
+        balanceMinor: {type: integer, format: int64, minimum: 0, maximum: 100000000000, readOnly: true}
+        version: {type: integer, format: int64, minimum: 0, readOnly: true}
+    PaymentRequest:
+      type: object
+      required: [sourceWalletId, targetWalletId, amountMinor, currency, description, purpose]
+      properties:
+        sourceWalletId: {type: string, format: uuid}
+        targetWalletId: {type: string, format: uuid}
+        amountMinor: {type: integer, format: int64, minimum: 1, maximum: 100000000}
+        currency: {type: string, enum: [INR]}
+        description: {type: string, minLength: 1, maxLength: 200, pattern: '.*\S.*'}
+        purpose: {type: string, enum: [TRANSFER, MERCHANT]}
+    Payment:
+      type: object
+      required: [id, ownerId, sourceWalletId, targetWalletId, amountMinor, currency, description, purpose, status, createdAt]
+      properties:
+        id: {type: string, format: uuid, readOnly: true}
+        ownerId: {type: string, readOnly: true}
+        sourceWalletId: {type: string, format: uuid, readOnly: true}
+        targetWalletId: {type: string, format: uuid, readOnly: true}
+        amountMinor: {type: integer, format: int64, minimum: 1, readOnly: true}
+        currency: {type: string, enum: [INR], readOnly: true}
+        description: {type: string, readOnly: true}
+        purpose: {type: string, enum: [TRANSFER, MERCHANT], readOnly: true}
+        status: {type: string, enum: [PENDING, SUCCESS, FAILED], readOnly: true}
+        reason: {type: string, nullable: true, readOnly: true, description: Machine-readable rejection reason when payment fails}
+        createdAt: {type: string, format: date-time, readOnly: true}
+    LedgerEntry:
+      type: object
+      required: [account_id, side, amount_minor, currency]
+      properties:
+        account_id: {type: string, format: uuid, readOnly: true}
+        side: {type: string, enum: [DEBIT, CREDIT], readOnly: true}
+        amount_minor: {type: integer, format: int64, minimum: 1, readOnly: true}
+        currency: {type: string, enum: [INR], readOnly: true}
+    Notification:
+      type: object
+      required: [payment_id, status, created_at]
+      properties:
+        payment_id: {type: string, format: uuid, readOnly: true}
+        status: {type: string, enum: [PAYMENT_SUCCEEDED, PAYMENT_FAILED], readOnly: true}
+        created_at: {type: string, format: date-time, readOnly: true}
+    SpendingReport:
+      type: object
+      required: [month, currency, categories, classification, consistency]
+      properties:
+        month: {type: string, readOnly: true}
+        currency: {type: string, enum: [INR], readOnly: true}
+        categories:
+          type: array
+          readOnly: true
+          maxItems: 5
+          items:
+            type: object
+            required: [category, amountMinor]
+            properties:
+              category: {type: string, enum: [FOOD, SHOPPING, TRAVEL, BILLS, OTHER], readOnly: true}
+              amountMinor: {type: integer, minimum: 0, readOnly: true, description: Exact aggregate paise; may exceed int64 over long periods}
+        classification: {type: string, enum: [RULE_BASED], readOnly: true}
+        consistency: {type: string, enum: [EVENTUALLY_CONSISTENT], readOnly: true}
+    Summary:
+      type: object
+      required: [report, narrative, mode, disclaimer]
+      properties:
+        report: {$ref: '#/components/schemas/SpendingReport'}
+        narrative: {type: string, readOnly: true}
+        mode: {type: string, enum: [LLM, AI_DISABLED, AI_BUSY, AI_EMPTY_RESPONSE, AI_UNAVAILABLE], readOnly: true}
+        disclaimer: {type: string, readOnly: true}
+    Problem:
+      type: object
+      properties:
+        type: {type: string, format: uri}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string}
+        instance: {type: string}

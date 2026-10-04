@@ -1,0 +1,64 @@
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: ${APP_NAME:finpay}
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10 # Bounded pool per service for the local PostgreSQL instances.
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER:http://localhost:8180/realms/finpay}
+          jwk-set-uri: ${JWT_JWKS:http://localhost:8180/realms/finpay/protocol/openid-connect/certs}
+          audiences: finpay-api
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000 # Bound unavailable-broker waits; the outbox retains unsent rows.
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: ${APP_NAME:finpay}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        isolation.level: read_committed
+    listener:
+      ack-mode: record
+      concurrency: 3 # Matches the three local topic partitions.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+logging:
+  structured:
+    format:
+      console: logstash
+finpay:
+  sandbox-funding: ${SANDBOX_FUNDING:false}
+  outbox-delay-ms: 1000 # One-second polling trades local latency for database load.

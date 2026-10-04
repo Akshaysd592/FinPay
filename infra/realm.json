@@ -1,0 +1,65 @@
+{
+  "realm": "finpay",
+  "enabled": true,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "accessTokenLifespan": 300,
+  "passwordPolicy": "length(12) and digits(1) and upperCase(1) and lowerCase(1)",
+  "roles": {"realm": [{"name": "CUSTOMER"}, {"name": "MERCHANT"}, {"name": "ADMIN"}]},
+  "clients": [
+    {
+      "clientId": "finpay-web",
+      "name": "FinPay browser application (authorization code with PKCE)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": ["http://localhost:3000/auth/callback", "http://localhost:8080/auth/callback"],
+      "webOrigins": [],
+      "defaultClientScopes": ["profile", "email", "roles"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000##http://localhost:8080"
+      },
+      "protocolMappers": [
+        {
+          "name": "finpay-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {"included.custom.audience": "finpay-api", "access.token.claim": "true", "id.token.claim": "false"}
+        },
+        {
+          "name": "realm-role-display",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {"claim.name": "realm_access.roles", "jsonType.label": "String", "multivalued": "true", "id.token.claim": "true", "access.token.claim": "true"}
+        }
+      ]
+    },
+    {
+      "clientId": "finpay-local",
+      "name": "Local demo only; disable direct grants outside development",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "defaultClientScopes": ["profile", "email", "roles"],
+      "attributes": {"pkce.code.challenge.method": "S256"},
+      "protocolMappers": [
+        {
+          "name": "finpay-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {"included.custom.audience": "finpay-api", "access.token.claim": "true", "id.token.claim": "false"}
+        }
+      ]
+    }
+  ]
+}
